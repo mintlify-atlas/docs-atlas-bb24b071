@@ -1,0 +1,591 @@
+---
+title: SvelteKit
+description: Install and configure Convex + Better Auth for SvelteKit with hooks and server-side authentication.
+keywords: ['convex', 'better-auth', 'sveltekit', 'svelte', 'ssr', 'setup']
+---
+
+<Warning>
+  SvelteKit support is community maintained and relies on the [@mmailaender/convex-better-auth-svelte](https://github.com/mmailaender/convex-better-auth-svelte) package. A complete working example is provided in that repo, and issues can be reported there as well.
+</Warning>
+
+## Prerequisites
+
+You need an existing project with Convex already set up. Complete the steps below before installing the auth component.
+
+<Steps>
+
+<Step title="Install Convex">
+
+<CodeGroup>
+
+```bash npm
+npm install convex @mmailaender/convex-svelte
+```
+
+```bash yarn
+yarn add convex @mmailaender/convex-svelte
+```
+
+```bash pnpm
+pnpm add convex @mmailaender/convex-svelte
+```
+
+</CodeGroup>
+
+</Step>
+
+<Step title="Customize the Convex functions directory">
+
+SvelteKit doesn't like referencing code outside of `src/`, so configure the Convex functions directory to be under `src/`.
+
+```json convex.json
+{
+  "functions": "src/convex/"
+}
+```
+
+</Step>
+
+<Step title="Set up a Convex dev deployment">
+
+Run `npx convex dev`. This logs you in with GitHub, creates a project, and saves your deployment URLs. It also creates a `src/convex/` folder and keeps your functions synced to your dev deployment.
+
+```bash
+npx convex dev
+```
+
+</Step>
+
+<Step title="Add a $convex alias">
+
+Add the `$convex` path alias to your `svelte.config.js` so you can import Convex functions with `$convex/...` instead of relative paths.
+
+```ts svelte.config.js
+import adapter from '@sveltejs/adapter-auto';
+import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
+
+/** @type {import('@sveltejs/kit').Config} */
+const config = {
+  preprocess: vitePreprocess(),
+
+  kit: {
+    adapter: adapter(),
+    alias: {
+      $convex: './src/convex'
+    }
+  }
+};
+
+export default config;
+```
+
+</Step>
+
+</Steps>
+
+## Installation
+
+<Steps>
+
+<Step title="Install packages">
+
+Install the component, ensure you have the latest version of Convex, and install a pinned version of Better Auth.
+
+<Warning>
+  This component requires Convex **1.25.0** or later. Install `better-auth@1.5.3` with an exact pin to avoid unexpected breaking changes.
+</Warning>
+
+<CodeGroup>
+
+```bash npm
+npm install @convex-dev/better-auth @mmailaender/convex-better-auth-svelte
+npm install better-auth@1.5.3 --save-exact
+```
+
+```bash yarn
+yarn add @convex-dev/better-auth @mmailaender/convex-better-auth-svelte
+yarn add better-auth@1.5.3 --exact
+```
+
+```bash pnpm
+pnpm add @convex-dev/better-auth @mmailaender/convex-better-auth-svelte
+pnpm add better-auth@1.5.3 --save-exact
+```
+
+</CodeGroup>
+
+</Step>
+
+<Step title="Register the component">
+
+Register the Better Auth component in your Convex project configuration.
+
+```ts src/convex/convex.config.ts
+import { defineApp } from "convex/server";
+import betterAuth from "@convex-dev/better-auth/convex.config";
+
+const app = defineApp();
+app.use(betterAuth);
+
+export default app;
+```
+
+</Step>
+
+<Step title="Add Convex auth config">
+
+Add a `src/convex/auth.config.ts` file to configure Better Auth as a Convex authentication provider.
+
+```ts src/convex/auth.config.ts
+import { getAuthConfigProvider } from "@convex-dev/better-auth/auth-config";
+import type { AuthConfig } from "convex/server";
+
+export default {
+  providers: [getAuthConfigProvider()],
+} satisfies AuthConfig;
+```
+
+</Step>
+
+<Step title="Set environment variables">
+
+Generate a secret for encryption and hashing, and set your site URL on your Convex deployment.
+
+```shell
+npx convex env set BETTER_AUTH_SECRET=$(openssl rand -base64 32)
+npx convex env set SITE_URL http://localhost:5173
+```
+
+Then add the client-side environment variables to the `.env.local` file created by `npx convex dev`.
+
+<Tabs>
+  <Tab title="Cloud">
+
+```shell .env.local
+# Deployment used by `npx convex dev`
+CONVEX_DEPLOYMENT=dev:adjective-animal-123 # team: team-name, project: project-name
+
+PUBLIC_CONVEX_URL=https://adjective-animal-123.convex.cloud
+
+# Same as PUBLIC_CONVEX_URL but ends in .site
+PUBLIC_CONVEX_SITE_URL=https://adjective-animal-123.convex.site
+
+# Your local site URL
+PUBLIC_SITE_URL=http://localhost:5173
+```
+
+  </Tab>
+  <Tab title="Self-hosted">
+
+```shell .env.local
+# Deployment used by `npx convex dev`
+CONVEX_DEPLOYMENT=dev:adjective-animal-123 # team: team-name, project: project-name
+
+PUBLIC_CONVEX_URL=http://127.0.0.1:3210
+
+# Will generally be one number higher than PUBLIC_CONVEX_URL,
+# so if your convex url is :3212, your site url will be :3213
+PUBLIC_CONVEX_SITE_URL=http://127.0.0.1:3211
+
+# Your local site URL
+PUBLIC_SITE_URL=http://localhost:5173
+```
+
+  </Tab>
+</Tabs>
+
+</Step>
+
+<Step title="Create a Better Auth server instance">
+
+Create the Better Auth instance in `src/convex/auth.ts` and initialize the component.
+
+<Note>
+  Some TypeScript errors will appear until you save the file and generated types are updated.
+</Note>
+
+```ts src/convex/auth.ts
+import { createClient, type GenericCtx } from "@convex-dev/better-auth";
+import { convex } from "@convex-dev/better-auth/plugins";
+import { components } from "./_generated/api";
+import { type DataModel } from "./_generated/dataModel";
+import { query } from "./_generated/server";
+import { betterAuth, type BetterAuthOptions } from "better-auth/minimal";
+import authConfig from "./auth.config";
+
+const siteUrl = process.env.SITE_URL!;
+
+// The component client has methods needed for integrating Convex with Better Auth,
+// as well as helper methods for general use.
+export const authComponent = createClient<DataModel>(components.betterAuth);
+
+export const createAuth = (ctx: GenericCtx<DataModel>) => {
+  return betterAuth({
+    baseURL: siteUrl,
+    database: authComponent.adapter(ctx),
+    // Configure simple, non-verified email/password to get started
+    emailAndPassword: {
+      enabled: true,
+      requireEmailVerification: false,
+    },
+    plugins: [
+      // The Convex plugin is required for Convex compatibility
+      convex({ authConfig }),
+    ],
+  });
+};
+
+// Example function for getting the current user
+// Feel free to edit, omit, etc.
+export const getCurrentUser = query({
+  args: {},
+  handler: async (ctx) => {
+    return authComponent.getAuthUser(ctx);
+  },
+});
+```
+
+</Step>
+
+<Step title="Create a Better Auth client instance">
+
+Create a Better Auth client instance for your frontend. Use `better-auth/svelte` for the Svelte-specific client.
+
+```ts src/lib/auth-client.ts
+import { createAuthClient } from 'better-auth/svelte';
+import { convexClient } from "@convex-dev/better-auth/client/plugins";
+
+export const authClient = createAuthClient({
+  plugins: [convexClient()],
+});
+```
+
+</Step>
+
+<Step title="Mount HTTP route handlers">
+
+Register the Better Auth route handlers on your Convex HTTP router.
+
+```ts src/convex/http.ts
+import { httpRouter } from "convex/server";
+import { authComponent, createAuth } from "./auth";
+
+const http = httpRouter();
+
+authComponent.registerRoutes(http, createAuth);
+
+export default http;
+```
+
+Then add a SvelteKit catch-all route to proxy auth requests to your Convex deployment.
+
+```ts src/routes/api/auth/[...all]/+server.ts
+import { createSvelteKitHandler } from '@mmailaender/convex-better-auth-svelte/sveltekit';
+
+export const { GET, POST } = createSvelteKitHandler();
+```
+
+</Step>
+
+<Step title="Set up the Convex client provider">
+
+Initialize the Convex client with auth in your root layout. `createSvelteAuthClient` already includes `setupConvex()` from `@mmailaender/convex-svelte`, so you don't need to call it separately.
+
+```svelte src/routes/+layout.svelte
+<script lang="ts">
+  import '../app.css';
+  import { createSvelteAuthClient } from '@mmailaender/convex-better-auth-svelte/svelte';
+  import { authClient } from '$lib/auth-client';
+
+  createSvelteAuthClient({ authClient });
+
+  let { children } = $props();
+</script>
+
+{@render children?.()}
+```
+
+</Step>
+
+<Step title="Set up the authentication token for server-side code">
+
+Set up a SvelteKit hook to extract the auth token on every request. `withServerConvexToken` stores the token per-request via `AsyncLocalStorage`, so `convexLoad` and `createConvexHttpClient` automatically pick it up during SSR without needing to pass `{ token }` in every load function.
+
+```ts src/hooks.server.ts
+import type { Handle } from "@sveltejs/kit";
+import { createAuth } from "$convex/auth.js";
+import { getToken } from '@mmailaender/convex-better-auth-svelte/sveltekit';
+import { withServerConvexToken } from '@mmailaender/convex-svelte/sveltekit/server';
+
+export const handle: Handle = async ({ event, resolve }) => {
+  const token = await getToken(createAuth, event.cookies);
+  event.locals.token = token;
+  return withServerConvexToken(token, () => resolve(event));
+};
+```
+
+Add the token type to your app's type definitions to enable TypeScript support for `event.locals.token` in server code.
+
+```ts src/app.d.ts
+declare global {
+  namespace App {
+    interface Locals {
+      token: string | undefined;
+    }
+  }
+}
+```
+
+With this setup, `convexLoad()` and `createConvexHttpClient()` automatically authenticate during SSR. `event.locals.token` is also available for direct use in server load functions and form actions.
+
+</Step>
+
+</Steps>
+
+You're now ready to use Better Auth with Convex in your SvelteKit app.
+
+## Usage
+
+See [Basic Usage](/usage/basic-usage) for sign-in, sign-up, and session management patterns. The notes below are specific to SvelteKit.
+
+### Using Better Auth from the client
+
+```svelte src/routes/+page.svelte
+<script lang="ts">
+  import { authClient } from '$lib/auth-client';
+  import { api } from '$convex/_generated/api';
+  import { useQuery } from '@mmailaender/convex-svelte';
+  import { useAuth } from '@mmailaender/convex-better-auth-svelte/svelte';
+
+  let { data } = $props();
+
+  // Auth state store
+  const auth = useAuth();
+  const isLoading = $derived(auth.isLoading);
+  const isAuthenticated = $derived(auth.isAuthenticated);
+
+  const currentUserResponse = useQuery(api.auth.getCurrentUser, () => (isAuthenticated ? {} : 'skip'));
+  let user = $derived(currentUserResponse.data);
+
+  let showSignIn = $state(true);
+  let name = $state('');
+  let email = $state('');
+  let password = $state('');
+
+  async function handlePasswordSubmit(event: Event) {
+    event.preventDefault();
+
+    try {
+      if (showSignIn) {
+        await authClient.signIn.email(
+          { email, password },
+          {
+            onError: (ctx) => {
+              alert(ctx.error.message);
+            }
+          }
+        );
+      } else {
+        await authClient.signUp.email(
+          { name, email, password },
+          {
+            onError: (ctx) => {
+              alert(ctx.error.message);
+            }
+          }
+        );
+      }
+    } catch (error) {
+      console.error('Authentication error:', error);
+    }
+  }
+
+  async function signOut() {
+    const result = await authClient.signOut();
+    if (result.error) {
+      console.error('Sign out error:', result.error);
+    }
+  }
+</script>
+
+{#if isLoading}
+  <div>Loading...</div>
+{:else if !isAuthenticated}
+  <form onsubmit={handlePasswordSubmit}>
+    {#if !showSignIn}
+      <input bind:value={name} placeholder="Name" required />
+    {/if}
+    <input type="email" bind:value={email} placeholder="Email" required />
+    <input type="password" bind:value={password} placeholder="Password" required />
+    <button type="submit">{showSignIn ? 'Sign in' : 'Sign up'}</button>
+  </form>
+{:else}
+  <div>Hello {user?.name}!</div>
+  <button onclick={signOut}>Sign out</button>
+{/if}
+```
+
+### Using Better Auth from the server
+
+With `withServerConvexToken` set up in your hook, the token is automatically available in server load functions. Use `createConvexHttpClient` for direct queries:
+
+```ts src/routes/+page.server.ts
+import type { PageServerLoad } from "./$types";
+import { api } from "$convex/_generated/api";
+import { createConvexHttpClient } from "@mmailaender/convex-better-auth-svelte/sveltekit";
+
+export const load: PageServerLoad = async () => {
+  const client = createConvexHttpClient();
+
+  const currentUser = await client.query(api.auth.getCurrentUser, {});
+  return { currentUser };
+};
+```
+
+You can also use `convexLoad` for SSR with automatic live subscription upgrade — this works in both `+page.ts` and `+page.server.ts`:
+
+```ts src/routes/+page.ts
+import { convexLoad } from "@mmailaender/convex-svelte/sveltekit";
+import { api } from "$convex/_generated/api";
+
+export const load = async () => ({
+  currentUser: await convexLoad(api.auth.getCurrentUser, {})
+});
+```
+
+### Authenticated requests
+
+There are two common patterns for making authenticated Convex requests from Svelte components.
+
+**Option 1: Conditionally run queries**
+
+Use `useAuth` and return `"skip"` for queries that should only run once the user is authenticated.
+
+```ts src/routes/+page.svelte
+import { api } from "$convex/_generated/api";
+import { useQuery } from "@mmailaender/convex-svelte";
+import { useAuth } from "@mmailaender/convex-better-auth-svelte/svelte";
+
+const auth = useAuth();
+
+// Only fetch once the user is authenticated
+const memberOnlyPosts = useQuery(api.posts.getMemberOnlyPosts, () =>
+  auth.isAuthenticated ? {} : "skip"
+);
+
+// Always fetched, regardless of auth state
+const publicPosts = useQuery(api.posts.getPublicPosts, {});
+```
+
+**Option 2: Require auth for all requests with `expectAuth`**
+
+Use `expectAuth: true` when your app is essentially members-only. All Convex queries and mutations will automatically include the auth token and will not run until the user is authenticated.
+
+```ts src/routes/+layout.svelte
+import { createSvelteAuthClient } from "@mmailaender/convex-better-auth-svelte/svelte";
+import { authClient } from "$lib/auth-client";
+
+createSvelteAuthClient({
+  authClient,
+  options: {
+    expectAuth: true,
+  },
+});
+```
+
+### SSR (optional)
+
+By default, authentication state is determined on the client, which can cause a brief loading flash while the session is validated. SSR authentication avoids this by providing auth state from the server during the initial page load.
+
+<Steps>
+
+<Step title="Get auth state in your layout server">
+
+Use `getAuthState` to determine authentication status during SSR. When `withServerConvexToken` is set up in your hook, call it with no arguments — the token is read automatically.
+
+```ts src/routes/+layout.server.ts
+import type { LayoutServerLoad } from "./$types";
+import { getAuthState } from "@mmailaender/convex-better-auth-svelte/sveltekit";
+
+export const load: LayoutServerLoad = () => {
+  return { authState: getAuthState() }; // synchronous, no await needed
+};
+```
+
+</Step>
+
+<Step title="Pass auth state to the client">
+
+Update your layout to pass the server auth state to `createSvelteAuthClient`.
+
+```svelte src/routes/+layout.svelte
+<script lang="ts">
+  import { createSvelteAuthClient } from '@mmailaender/convex-better-auth-svelte/svelte';
+  import { authClient } from '$lib/auth-client';
+
+  let { children, data } = $props();
+
+  // Pass server auth state to prevent loading flash
+  createSvelteAuthClient({
+    authClient,
+    getServerState: () => data.authState
+  });
+</script>
+
+{@render children()}
+```
+
+</Step>
+
+<Step title="Prefetch user data">
+
+For the best experience, also prefetch user data on the server to prevent content flash.
+
+```ts src/routes/+layout.server.ts
+import type { LayoutServerLoad } from "./$types";
+import { api } from "$convex/_generated/api";
+import { createConvexHttpClient, getAuthState } from "@mmailaender/convex-better-auth-svelte/sveltekit";
+
+export const load: LayoutServerLoad = async () => {
+  const authState = getAuthState();
+
+  if (!authState.isAuthenticated) {
+    return { authState, currentUser: null };
+  }
+
+  const client = createConvexHttpClient();
+
+  try {
+    const currentUser = await client.query(api.auth.getCurrentUser, {});
+    return { authState, currentUser };
+  } catch {
+    return { authState, currentUser: null };
+  }
+};
+```
+
+Then use `initialData` in your queries to prevent data flash:
+
+```svelte src/routes/+page.svelte
+<script lang="ts">
+  import { api } from '$convex/_generated/api';
+  import { useQuery } from '@mmailaender/convex-svelte';
+  import { useAuth } from '@mmailaender/convex-better-auth-svelte/svelte';
+
+  let { data } = $props();
+  const auth = useAuth();
+
+  const currentUserResponse = useQuery(
+    api.auth.getCurrentUser,
+    () => (auth.isAuthenticated ? {} : 'skip'),
+    () => ({
+      initialData: data.currentUser,
+      keepPreviousData: true
+    })
+  );
+</script>
+```
+
+</Step>
+
+</Steps>

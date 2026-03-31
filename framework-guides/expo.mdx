@@ -1,0 +1,382 @@
+---
+title: Expo (React Native)
+description: Install and configure Convex + Better Auth for Expo and React Native mobile apps.
+keywords: ['convex', 'better-auth', 'expo', 'react-native', 'mobile', 'setup']
+---
+
+Expo uses the `@better-auth/expo` plugin for secure cookie storage via `expo-secure-store`. Auth requests go directly to your Convex `.convex.site` URL.
+
+## Installation
+
+<Steps>
+
+<Step title="Install packages">
+
+Install the component, ensure you have the latest version of Convex, and install pinned versions of Better Auth and the Expo integration.
+
+<Warning>
+  This component requires Convex **1.25.0** or later. Install `better-auth@1.5.3` and `@better-auth/expo@1.5.3` with exact pins to avoid unexpected breaking changes.
+</Warning>
+
+<CodeGroup>
+
+```bash npm
+npm install convex@latest @convex-dev/better-auth
+npm install better-auth@1.5.3 @better-auth/expo@1.5.3 --save-exact
+```
+
+```bash yarn
+yarn add convex@latest @convex-dev/better-auth
+yarn add better-auth@1.5.3 @better-auth/expo@1.5.3 --exact
+```
+
+```bash pnpm
+pnpm add convex@latest @convex-dev/better-auth
+pnpm add better-auth@1.5.3 @better-auth/expo@1.5.3 --save-exact
+```
+
+</CodeGroup>
+
+</Step>
+
+<Step title="Install Expo dependencies">
+
+Install `expo-secure-store`, which is used for secure cookie storage on device.
+
+```bash
+npx expo install expo-secure-store
+```
+
+</Step>
+
+<Step title="Register the component">
+
+Register the Better Auth component in your Convex project configuration.
+
+```ts convex/convex.config.ts
+import { defineApp } from "convex/server";
+import betterAuth from "@convex-dev/better-auth/convex.config";
+
+const app = defineApp();
+app.use(betterAuth);
+
+export default app;
+```
+
+</Step>
+
+<Step title="Add Convex auth config">
+
+Add a `convex/auth.config.ts` file to configure Better Auth as a Convex authentication provider.
+
+```ts convex/auth.config.ts
+import { getAuthConfigProvider } from "@convex-dev/better-auth/auth-config";
+import type { AuthConfig } from "convex/server";
+
+export default {
+  providers: [getAuthConfigProvider()],
+} satisfies AuthConfig;
+```
+
+</Step>
+
+<Step title="Set environment variables">
+
+Generate a secret for encryption and hashing on your Convex deployment.
+
+```shell
+npx convex env set BETTER_AUTH_SECRET=$(openssl rand -base64 32)
+```
+
+Then add the client-side environment variables to the `.env.local` file created by `npx convex dev`.
+
+<Tabs>
+  <Tab title="Cloud">
+
+```shell .env.local
+# Deployment used by `npx convex dev`
+CONVEX_DEPLOYMENT=dev:adjective-animal-123 # team: team-name, project: project-name
+
+EXPO_PUBLIC_CONVEX_URL=https://adjective-animal-123.convex.cloud
+
+# Same as EXPO_PUBLIC_CONVEX_URL but ends in .site
+EXPO_PUBLIC_CONVEX_SITE_URL=https://adjective-animal-123.convex.site
+```
+
+  </Tab>
+  <Tab title="Self-hosted">
+
+```shell .env.local
+# Deployment used by `npx convex dev`
+CONVEX_DEPLOYMENT=dev:adjective-animal-123 # team: team-name, project: project-name
+
+EXPO_PUBLIC_CONVEX_URL=http://127.0.0.1:3210
+
+# Will generally be one number higher than EXPO_PUBLIC_CONVEX_URL,
+# so if your convex url is :3212, your site url will be :3213
+EXPO_PUBLIC_CONVEX_SITE_URL=http://127.0.0.1:3211
+```
+
+  </Tab>
+</Tabs>
+
+</Step>
+
+<Step title="Create a Better Auth server instance">
+
+Create the Better Auth instance in `convex/auth.ts` and initialize the component. The `expo` plugin is required alongside the `convex` plugin.
+
+<Note>
+  Some TypeScript errors will appear until you save the file and generated types are updated.
+</Note>
+
+```ts convex/auth.ts
+import { createClient, type GenericCtx } from "@convex-dev/better-auth";
+import { convex } from "@convex-dev/better-auth/plugins";
+import { betterAuth, type BetterAuthOptions } from "better-auth/minimal";
+import { expo } from '@better-auth/expo'
+import { components } from "./_generated/api";
+import { DataModel } from "./_generated/dataModel";
+import { query } from "./_generated/server";
+import authConfig from "./auth.config";
+
+// The component client has methods needed for integrating Convex with Better Auth,
+// as well as helper methods for general use.
+export const authComponent = createClient<DataModel>(components.betterAuth);
+
+export const createAuth = (ctx: GenericCtx<DataModel>) => {
+  return betterAuth({
+    trustedOrigins: ["your-scheme://"],
+    database: authComponent.adapter(ctx),
+    // Configure simple, non-verified email/password to get started
+    emailAndPassword: {
+      enabled: true,
+      requireEmailVerification: false,
+    },
+    plugins: [
+      // The Expo and Convex plugins are required
+      expo(),
+      convex({ authConfig }),
+    ],
+  });
+};
+
+// Example function for getting the current user
+// Feel free to edit, omit, etc.
+export const getCurrentUser = query({
+  args: {},
+  handler: async (ctx) => {
+    return authComponent.getAuthUser(ctx);
+  },
+});
+```
+
+</Step>
+
+<Step title="Create a Better Auth client instance">
+
+Create a Better Auth client instance using the `expoClient` plugin for secure storage and deep link handling.
+
+```ts src/lib/auth-client.ts
+import { createAuthClient } from "better-auth/react";
+import { convexClient } from "@convex-dev/better-auth/client/plugins";
+import { expoClient } from '@better-auth/expo/client'
+import Constants from 'expo-constants'
+import * as SecureStore from 'expo-secure-store'
+
+export const authClient = createAuthClient({
+  baseURL: process.env.EXPO_PUBLIC_CONVEX_SITE_URL,
+  plugins: [
+    expoClient({
+      scheme: Constants.expoConfig?.scheme as string,
+      storagePrefix: Constants.expoConfig?.scheme as string,
+      storage: SecureStore,
+    }),
+    convexClient(),
+  ],
+});
+```
+
+</Step>
+
+<Step title="Mount HTTP route handlers">
+
+Register the Better Auth route handlers on your Convex HTTP router.
+
+```ts convex/http.ts
+import { httpRouter } from "convex/server";
+import { authComponent, createAuth } from "./auth";
+
+const http = httpRouter();
+
+authComponent.registerRoutes(http, createAuth);
+
+export default http;
+```
+
+</Step>
+
+<Step title="Set up the Convex client provider">
+
+Wrap your app with `ConvexBetterAuthProvider` from `@convex-dev/better-auth/react`. This replaces the standard `ConvexProvider`.
+
+```tsx app/_layout.tsx
+import { StrictMode } from "react";
+import { Slot } from "expo-router";
+import { ConvexReactClient } from "convex/react";
+import { ConvexBetterAuthProvider } from "@convex-dev/better-auth/react";
+import { authClient } from "@/lib/auth-client";
+
+const convex = new ConvexReactClient(process.env.EXPO_PUBLIC_CONVEX_URL as string, {
+  // Optionally pause queries until the user is authenticated
+  expectAuth: true,
+  unsavedChangesWarning: false,
+});
+
+export default function MyLayout() {
+  return (
+    <StrictMode>
+      <ConvexBetterAuthProvider client={convex} authClient={authClient}>
+        <Slot />
+      </ConvexBetterAuthProvider>
+    </StrictMode>
+  );
+}
+```
+
+</Step>
+
+<Step title="Follow the Better Auth Expo guide">
+
+The Expo integration requires a few additional steps that may change over time. Follow **steps 3, 6, and 7** of the [Better Auth Expo integration guide](https://www.better-auth.com/docs/integrations/expo).
+
+</Step>
+
+</Steps>
+
+You're now ready to use Better Auth with Convex in your Expo app.
+
+## Usage
+
+See [Basic Usage](/usage/basic-usage) for sign-in, sign-up, and session management patterns. The notes below are specific to Expo.
+
+### Social sign-in
+
+Social sign-in for Expo works the same as with full-stack frameworks, but the authorized origin and redirect URI are based on your Convex site URL rather than your application domain.
+
+For example, with [Google sign-in](https://www.better-auth.com/docs/authentication/google):
+
+```
+# authorized origin
+https://adjective-animal-123.convex.site
+
+# authorized redirect URI
+https://adjective-animal-123.convex.site/api/auth/callback/google
+```
+
+## Expo Web support
+
+To use Expo Web alongside Expo Go, a few additional steps are required.
+
+<Steps>
+
+<Step title="Update environment variables">
+
+Follow step 4 of the [React guide](/framework-guides/react) to add your Expo Web site URL as the `SITE_URL` environment variable.
+
+</Step>
+
+<Step title="Update the Better Auth instance">
+
+Add the site URL and the `crossDomain` plugin to the Better Auth instance.
+
+```ts convex/auth.ts
+import { createClient, type GenericCtx } from "@convex-dev/better-auth";
+import {
+  convex,
+  crossDomain,
+} from "@convex-dev/better-auth/plugins";
+import { betterAuth } from "better-auth/minimal";
+import { expo } from "@better-auth/expo";
+import { components } from "./_generated/api";
+import { DataModel } from "./_generated/dataModel";
+import { query } from "./_generated/server";
+import authConfig from "./auth.config";
+
+// The component client has methods needed for integrating Convex with Better Auth,
+// as well as helper methods for general use.
+export const authComponent = createClient<DataModel>(components.betterAuth);
+
+const siteUrl = process.env.SITE_URL!;
+
+export const createAuthOptions = (ctx: GenericCtx<DataModel>) =>
+  ({
+    trustedOrigins: [siteUrl, "your-scheme://"],
+    database: authComponent.adapter(ctx),
+    emailAndPassword: {
+      enabled: true,
+      requireEmailVerification: false,
+    },
+    plugins: [
+      expo(),
+      convex({ authConfig }),
+      crossDomain({ siteUrl }),
+    ],
+  }) satisfies BetterAuthOptions;
+```
+
+</Step>
+
+<Step title="Enable CORS">
+
+Add `{ cors: true }` to the Better Auth route handlers registration.
+
+```ts convex/http.ts
+import { httpRouter } from "convex/server";
+import { authComponent, createAuth } from "./auth";
+
+const http = httpRouter();
+
+// CORS handling is required for client side frameworks
+authComponent.registerRoutes(http, createAuth, { cors: true });
+
+export default http;
+```
+
+</Step>
+
+<Step title="Update the client instance">
+
+Add the `crossDomainClient` plugin for Expo Web. Use `Platform.OS` to conditionally include it — `expoClient` and `crossDomainClient` cannot both be present at the same time.
+
+```ts src/lib/auth-client.ts
+import { expoClient } from "@better-auth/expo/client";
+import {
+  convexClient,
+  crossDomainClient,
+} from "@convex-dev/better-auth/client/plugins";
+import { createAuthClient } from "better-auth/react";
+import Constants from "expo-constants";
+import * as SecureStore from "expo-secure-store";
+import { Platform } from "react-native";
+
+export const authClient = createAuthClient({
+  baseURL: process.env.EXPO_PUBLIC_CONVEX_SITE_URL,
+  plugins: [
+    convexClient(),
+    ...(Platform.OS === "web"
+      ? [crossDomainClient()]
+      : [
+          expoClient({
+            scheme: Constants.expoConfig?.scheme as string,
+            storagePrefix: Constants.expoConfig?.scheme as string,
+            storage: SecureStore,
+          }),
+        ]),
+  ],
+});
+```
+
+</Step>
+
+</Steps>

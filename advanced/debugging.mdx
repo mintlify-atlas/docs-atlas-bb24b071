@@ -1,0 +1,59 @@
+---
+title: "Debugging"
+description: "Troubleshoot issues with Convex + Better Auth"
+---
+
+## Verbose logging
+
+### Backend
+
+Enable verbose logs from the Better Auth component by passing `verbose: true` to `createClient`.
+
+```ts title="convex/auth.ts"
+export const authComponent = createClient(
+  components.betterAuth,
+  {
+    verbose: true,
+  }
+);
+```
+
+### Client side
+
+Enable verbose logs on the Convex client by passing `verbose: true` to `ConvexReactClient`.
+
+```ts title="src/main.ts"
+// Replace this with your framework prefixed environment variable
+// for your project's Convex cloud URL
+const convexUrl = import.meta.env.PUBLIC_CONVEX_URL as string;
+const convex = new ConvexReactClient(convexUrl, {
+  verbose: true,
+});
+```
+
+## Out of memory
+
+If `convex dev`, `convex deploy`, or a code push fails with an error like `JavaScript execution ran out of memory (maximum memory usage: 64 MB)`, try the following steps.
+
+**Use `registerRoutesLazy()`**
+
+Replace `registerRoutes()` with `registerRoutesLazy()` in `convex/http.ts`. This defers Better Auth initialization so it does not run during route registration, keeping the startup bundle smaller.
+
+**Import plugins from subpaths**
+
+Import Better Auth plugins from their subpaths instead of the top-level `better-auth/plugins` barrel. Subpath imports pull in less code, which reduces bundle size and memory usage.
+
+```ts title="convex/auth.ts"
+import { magicLink } from "better-auth/plugins/magic-link";
+import { emailOTP } from "better-auth/plugins/email-otp";
+```
+
+**Generate a debug bundle**
+
+Inspect what is included in your bundle to find unexpected dependencies.
+
+```sh
+npx convex dev --once --debug-bundle-path /tmp/convex-bundle
+```
+
+The output contains an `isolate` folder (code that runs in the Convex runtime) and a `node` folder (code that runs in Node.js). Check the `isolate` bundle for `convex/http.ts` to see if unexpected dependencies are inflating it.

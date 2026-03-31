@@ -1,0 +1,238 @@
+---
+title: "Local Install"
+description: "Own your Better Auth schema and unlock all plugins"
+---
+
+Local install gives you full control over your Better Auth schema, allows schema-related configuration to work, and makes it possible to use plugins beyond those [supported](/usage/supported-plugins) out of the box. It also allows you to write Convex functions that directly access Better Auth component tables.
+
+With this approach, the Better Auth plugin is defined in its own Convex subdirectory. Installation differs from the default approach and includes a schema generation step via the Better Auth CLI, similar to the installation experience with other providers.
+
+## Installation
+
+<Note>
+  Before you begin, follow the [Getting Started](/quickstart) guide to set up
+  Convex + Better Auth for your project. Then return here to convert the default
+  install to a local install.
+</Note>
+
+<Steps>
+  <Step title="Create the component definition">
+    Create a `convex/betterAuth/convex.config.ts` file to define the component. This signals to Convex that the `convex/betterAuth` directory is a locally installed component.
+
+    ```ts title="convex/betterAuth/convex.config.ts"
+    import { defineComponent } from "convex/server";
+
+    const component = defineComponent("betterAuth");
+
+    export default component;
+    ```
+  </Step>
+
+  <Step title="Generate the schema">
+    Add a static `auth` export to a `convex/betterAuth/auth.ts` file.
+
+    <Warning>
+      This file should only have your `auth` export for schema generation, and no
+      other code. If this file is imported at runtime it will trigger errors due to
+      missing environment variables.
+    </Warning>
+
+    ```ts title="convex/betterAuth/auth.ts"
+    import { createAuth } from '../auth'
+
+    // Export a static instance for Better Auth schema generation
+    export const auth = createAuth({} as any)
+    ```
+
+    Then generate the schema for the component.
+
+    ```bash
+    cd convex/betterAuth
+    npx @better-auth/cli generate -y
+    ```
+  </Step>
+
+  <Step title="Split out createAuthOptions function">
+    Code in your component directory needs access to your Better Auth options, but running `createAuth()` inside the component directory will trigger errors from Better Auth due to lack of environment variable access.
+
+    To avoid this, create a separate `createAuthOptions` function that returns only the typed options object, and update `createAuth` to call it.
+
+    ```ts title="convex/auth.ts"
+    import {
+      betterAuth,
+      type BetterAuthOptions,
+    } from "better-auth/minimal";
+
+    export const createAuthOptions = (ctx: GenericCtx<DataModel>) => {
+      return {
+        // ... auth config
+      } satisfies BetterAuthOptions;
+    };
+
+    export const createAuth = (ctx: GenericCtx<DataModel>) => {
+      return betterAuth(createAuthOptions(ctx));
+    };
+    ```
+  </Step>
+
+  <Step title="Export adapter functions">
+    Export adapter functions for the component.
+
+    ```ts title="convex/betterAuth/adapter.ts"
+    import { createApi } from "@convex-dev/better-auth";
+    import schema from "./schema";
+    import { createAuthOptions } from "../auth";
+
+    export const {
+      create,
+      findOne,
+      findMany,
+      updateOne,
+      updateMany,
+      deleteOne,
+      deleteMany,
+    } = createApi(schema, createAuthOptions);
+    ```
+  </Step>
+
+  <Step title="Update component registration">
+    Update `convex/convex.config.ts` to import the component definition from the local directory instead of the package.
+
+    ```ts title="convex/convex.config.ts"
+    import { defineApp } from "convex/server";
+    import betterAuth from "./betterAuth/convex.config";
+
+    const app = defineApp();
+    app.use(betterAuth);
+
+    export default app;
+    ```
+  </Step>
+
+  <Step title="Update component config">
+    Update the component client config in `convex/auth.ts` to pass the local schema.
+
+    ```ts title="convex/auth.ts"
+    import authSchema from "./betterAuth/schema";
+
+    // ...
+
+    export const authComponent = createClient<DataModel, typeof authSchema>(
+      components.betterAuth,
+      {
+        local: {
+          schema: authSchema,
+        },
+      }
+    );
+
+    // ...
+    ```
+  </Step>
+</Steps>
+
+The Better Auth component and schema are now locally defined in your Convex project.
+
+## Usage
+
+### Updating the schema
+
+Certain option changes may require schema regeneration. The Better Auth docs will often note when this is the case. To regenerate the schema at any time, move into the component directory and run the Better Auth CLI generate command.
+
+```bash
+cd convex/betterAuth
+npx @better-auth/cli generate -y
+```
+
+### Adding custom indexes
+
+Some database interactions through Better Auth may run queries that don't use an index. The Better Auth component automatically selects a suitable index for a given query if one exists, and will log a warning indicating what index should be added.
+
+Custom indexes can be added by generating the schema to a secondary file, importing it into `convex/betterAuth/schema.ts`, and adding the indexes. This way custom indexes aren't overwritten when the schema is regenerated.
+
+<Note>
+  Schema table names and fields should not be customized directly, as any
+  customizations won't match your Better Auth configuration and will be
+  overwritten when the schema is regenerated. Instead, customize the Better Auth
+  schema through [options](https://www.better-auth.com/docs/concepts/database#core-schema).
+</Note>
+
+<Steps>
+  <Step title="Generate the schema to a secondary file">
+    ```bash
+    cd convex/betterAuth
+    npx @better-auth/cli generate -y --output generatedSchema.ts
+    ```
+  </Step>
+
+  <Step title="Update the final schema">
+    Delete the contents of `schema.ts` and replace them with table definitions imported from the generated schema.
+
+    ```ts title="convex/betterAuth/schema.ts"
+    import { defineSchema } from "convex/server";
+    import { tables } from "./generatedSchema";
+
+    const schema = defineSchema({
+      ...tables,
+      // Spread the generated schema and add a custom index
+      user: tables.user.index("custom_index", ["field1", "field2"]),
+    });
+
+    export default schema;
+    ```
+  </Step>
+</Steps>
+
+### Accessing component data
+
+Convex functions within your Better Auth component directory can access the component's tables directly, and can then be called from outside the component via `ctx.runQuery`, `ctx.runMutation`, or `ctx.runAction`.
+
+Note that internal functions defined in a component are not accessible from outside it, so functions that need to run from outside the component must be public. While public functions are normally exposed to the internet, **Convex functions exported by a component are never exposed to the internet, even if they are public**.
+
+<Note>
+  If a function in a component is called from outside the component, the return
+  type won't be inferred unless a return validator is provided.
+</Note>
+
+```ts title="convex/betterAuth/someFile.ts"
+import { query, mutation } from "./_generated/server";
+import { doc } from "convex-helpers/validators";
+import schema from "./schema";
+import { v } from "convex/values";
+
+// This is accessible from outside the component
+export const someFunction = query({
+  args: { sessionId: v.id("session") },
+  // Add a return validator so the return value is typed when
+  // called from outside the component.
+  returns: v.union(v.null(), doc(schema, "session")),
+  handler: async (ctx, args) => {
+    return await ctx.db.get(args.sessionId);
+  },
+});
+
+// This is not accessible from outside the component.
+export const someInternalFunction = internalQuery({
+  args: { sessionId: v.id("session") },
+  handler: async (ctx, args) => {
+    return await ctx.db.get(args.sessionId);
+  },
+});
+```
+
+These functions can be called from a parent component or app.
+
+```ts title="convex/someFile.ts"
+import { query } from "./_generated/server";
+import { components } from "./_generated/api";
+import { v } from "convex/values";
+
+export const someFunction = query({
+  args: { sessionId: v.id("session") },
+  handler: async (ctx, args) => {
+    return await ctx.runQuery(components.betterAuth.someFile.someFunction, {
+      sessionId: args.sessionId,
+    });
+  },
+});
+```

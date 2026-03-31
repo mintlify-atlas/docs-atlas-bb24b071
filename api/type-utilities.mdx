@@ -1,0 +1,135 @@
+---
+title: "Type Utilities"
+description: "TypeScript type utilities for Convex + Better Auth"
+---
+
+These utilities help you narrow the Convex context type when your Better Auth config callbacks require a specific context.
+
+The `ctx` passed to your `createAuth` function can be any of three Convex context types — query, mutation, or action. Many Better Auth callbacks accept a `ctx` typed as `GenericCtx`, but the operations inside them (network requests, mutations) only work with a subset of those types. The type guards below narrow `ctx` at runtime and at the TypeScript level.
+
+All utilities are imported from `@convex-dev/better-auth/utils`:
+
+```ts
+import {
+  requireActionCtx,
+  requireRunMutationCtx,
+  requireMutationCtx,
+  requireQueryCtx,
+} from "@convex-dev/better-auth/utils";
+```
+
+## `requireActionCtx(ctx)`
+
+Narrows `ctx` to `GenericActionCtx`. Throws at runtime if the provided context is not an action context.
+
+### Parameters
+
+<ParamField path="ctx" type="GenericCtx<DataModel>" required>
+  The Convex context to narrow. Must be an action context.
+</ParamField>
+
+### Returns
+
+The same `ctx` value, typed as `GenericActionCtx<DataModel>`. Throws `Error("Action context required")` if the context is a query or mutation context.
+
+---
+
+## `requireRunMutationCtx(ctx)`
+
+Narrows `ctx` to a context that has `runMutation`. Accepts mutation and action contexts. Throws at runtime if a query context is provided.
+
+### Parameters
+
+<ParamField path="ctx" type="GenericCtx<DataModel>" required>
+  The Convex context to narrow. Must be a mutation or action context.
+</ParamField>
+
+### Returns
+
+The same `ctx` value, typed as `RunMutationCtx<DataModel>` (a mutation or action context that has `runMutation`). Throws `Error("Mutation or action context required")` if the context is a query context.
+
+---
+
+## `requireMutationCtx(ctx)`
+
+Narrows `ctx` to `GenericMutationCtx`. Throws at runtime if the provided context is not a mutation context (query and action contexts are both rejected).
+
+### Parameters
+
+<ParamField path="ctx" type="GenericCtx<DataModel>" required>
+  The Convex context to narrow. Must be a mutation context.
+</ParamField>
+
+### Returns
+
+The same `ctx` value, typed as `GenericMutationCtx<DataModel>`. Throws `Error("Mutation context required")` if the context is not a mutation context.
+
+---
+
+## `requireQueryCtx(ctx)`
+
+Narrows `ctx` to `GenericQueryCtx`. Throws at runtime if the provided context is not a query context.
+
+### Parameters
+
+<ParamField path="ctx" type="GenericCtx<DataModel>" required>
+  The Convex context to narrow. Must be a query context.
+</ParamField>
+
+### Returns
+
+The same `ctx` value, typed as `GenericQueryCtx<DataModel>`. Throws `Error("Query context required")` if the context is not a query context.
+
+---
+
+## `GenericCtx<DataModel>`
+
+The union type for all three Convex context types. Use this as the type annotation for `ctx` in your `createAuth` function so it can be called from queries, mutations, and actions alike.
+
+Import from `@convex-dev/better-auth`.
+
+```ts
+import { type GenericCtx } from "@convex-dev/better-auth";
+```
+
+```ts
+type GenericCtx<DataModel extends GenericDataModel> =
+  | GenericQueryCtx<DataModel>
+  | GenericMutationCtx<DataModel>
+  | GenericActionCtx<DataModel>;
+```
+
+---
+
+## Example: sending email with Resend
+
+A common use case is sending verification or password-reset emails using the [Resend component](https://www.convex.dev/components/resend). `resend.sendEmail` requires an action context because it makes a network request, but Better Auth's `sendVerificationEmail` callback receives a `GenericCtx`. Use `requireActionCtx` to narrow the type:
+
+```ts title="convex/auth.ts"
+import { requireActionCtx } from "@convex-dev/better-auth/utils";
+import { type GenericCtx } from "@convex-dev/better-auth";
+import { Resend } from "@convex-dev/resend";
+import { components } from "./_generated/api";
+import { type DataModel } from "./_generated/dataModel";
+
+export const resend = new Resend(components.resend);
+
+export const createAuthOptions = (ctx: GenericCtx<DataModel>) => ({
+  baseURL: siteUrl,
+  sendVerificationEmail: async ({ user, url }) => {
+    // This callback only requires `runMutation` on ctx, but we assert an action
+    // context here because sending an email is a network request.
+    await resend.sendEmail(requireActionCtx(ctx), {
+      to: user.email,
+      subject: "Verify your email",
+      html: `<p>Click <a href="${url}">here</a> to verify your email</p>`,
+    });
+  },
+});
+```
+
+<Note>
+  `sendVerificationEmail` is called from the HTTP route handler, which always
+  runs in an action context. `requireActionCtx` throws at runtime if called from
+  a query or mutation, so it also acts as a safeguard against misuse.
+</Note>

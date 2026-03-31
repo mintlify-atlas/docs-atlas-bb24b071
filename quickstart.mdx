@@ -1,80 +1,242 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart
+description: Get from zero to working authentication with Convex + Better Auth.
+keywords: ['convex', 'better-auth', 'quickstart', 'install', 'setup']
 ---
 
-## Get started in three steps
+This guide covers the universal setup steps that apply to every framework. After completing them, follow your [framework-specific guide](#next-steps) to finish the remaining configuration.
 
-Get your documentation site running locally and make your first customization.
+<Note>
+  You need an existing Convex project before starting. Run `npm create convex@latest` if you don't have one, then come back here.
+</Note>
 
-### Step 1: Set up your local environment
+<Steps>
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+<Step title="Start the Convex dev server">
 
-### Step 2: Deploy your changes
+Keep `npx convex dev` running throughout this setup. It initializes your deployment if it doesn't exist yet, and keeps generated types current as you add files.
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+```bash
+npx convex dev
+```
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+</Step>
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+<Step title="Install packages">
 
-### Step 3: Go live
+Install the component, ensure you have the latest version of Convex, and install a pinned version of Better Auth.
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+<CodeGroup>
+
+```bash npm
+npm install convex@latest @convex-dev/better-auth
+npm install better-auth@1.5.3 --save-exact
+```
+
+```bash yarn
+yarn add convex@latest @convex-dev/better-auth
+yarn add better-auth@1.5.3 --exact
+```
+
+```bash pnpm
+pnpm add convex@latest @convex-dev/better-auth
+pnpm add better-auth@1.5.3 --save-exact
+```
+
+</CodeGroup>
+
+<Warning>
+  This component requires Convex **1.25.0** or later and is tested against Better Auth **1.5.x**. Install `better-auth@1.5.3` with an exact pin to avoid unexpected breaking changes from minor releases.
+</Warning>
+
+</Step>
+
+<Step title="Register the component">
+
+Register the Better Auth component in your Convex project configuration.
+
+```ts convex/convex.config.ts
+import { defineApp } from "convex/server";
+import betterAuth from "@convex-dev/better-auth/convex.config";
+
+const app = defineApp();
+app.use(betterAuth);
+
+export default app;
+```
+
+</Step>
+
+<Step title="Add Convex auth config">
+
+Add a `convex/auth.config.ts` file to configure Better Auth as a Convex authentication provider. This is what tells Convex to trust JWTs issued by the component.
+
+```ts convex/auth.config.ts
+import { getAuthConfigProvider } from "@convex-dev/better-auth/auth-config";
+import type { AuthConfig } from "convex/server";
+
+export default {
+  providers: [getAuthConfigProvider()],
+} satisfies AuthConfig;
+```
+
+</Step>
+
+<Step title="Set environment variables">
+
+Generate a secret used for encryption and hashing, and set your site URL on your Convex deployment.
+
+```shell
+npx convex env set BETTER_AUTH_SECRET=$(openssl rand -base64 32)
+npx convex env set SITE_URL http://localhost:3000
+```
+
+<Note>
+  `SITE_URL` should be `http://localhost:5173` for React (Vite) apps. Update it to your production URL before deploying.
+</Note>
+
+</Step>
+
+<Step title="Create a Better Auth instance">
+
+Create the Better Auth instance in `convex/auth.ts`. This example uses the React/Vite setup with the `crossDomain` plugin, which is required for client-side SPA frameworks.
+
+```ts convex/auth.ts
+import { createClient, type GenericCtx } from "@convex-dev/better-auth";
+import { convex, crossDomain } from "@convex-dev/better-auth/plugins";
+import { components } from "./_generated/api";
+import { DataModel } from "./_generated/dataModel";
+import { query } from "./_generated/server";
+import { betterAuth, type BetterAuthOptions } from "better-auth/minimal";
+import authConfig from "./auth.config";
+
+const siteUrl = process.env.SITE_URL!;
+
+// The component client has methods needed for integrating Convex with Better Auth,
+// as well as helper methods for general use.
+export const authComponent = createClient<DataModel>(components.betterAuth);
+
+export const createAuth = (ctx: GenericCtx<DataModel>) => {
+  return betterAuth({
+    trustedOrigins: [siteUrl],
+    database: authComponent.adapter(ctx),
+    // Configure simple, non-verified email/password to get started
+    emailAndPassword: {
+      enabled: true,
+      requireEmailVerification: false,
+    },
+    plugins: [
+      // The cross domain plugin is required for client-side frameworks
+      crossDomain({ siteUrl }),
+      // The Convex plugin is required for Convex compatibility
+      convex({ authConfig }),
+    ],
+  });
+};
+
+// Example function for getting the current user
+export const getCurrentUser = query({
+  args: {},
+  handler: async (ctx) => {
+    return authComponent.getAuthUser(ctx);
+  },
+});
+```
+
+<Note>
+  Full-stack frameworks like Next.js do not need the `crossDomain` plugin. See the [Next.js guide](/framework-guides/nextjs) for the server-side variant.
+</Note>
+
+</Step>
+
+<Step title="Register HTTP routes">
+
+Mount the Better Auth route handlers on your Convex HTTP router. This exposes the `/api/auth/*` endpoints from your Convex deployment's `.convex.site` URL.
+
+```ts convex/http.ts
+import { httpRouter } from "convex/server";
+import { authComponent, createAuth } from "./auth";
+
+const http = httpRouter();
+
+// CORS handling is required for client-side frameworks
+authComponent.registerRoutes(http, createAuth, { cors: true });
+
+export default http;
+```
+
+</Step>
+
+<Step title="Create an auth client">
+
+Create a Better Auth client instance for your frontend. This is used to call sign-in, sign-up, and session management methods from your UI code.
+
+```ts src/lib/auth-client.ts
+import { createAuthClient } from "better-auth/react";
+import {
+  convexClient,
+  crossDomainClient,
+} from "@convex-dev/better-auth/client/plugins";
+
+export const authClient = createAuthClient({
+  baseURL: import.meta.env.VITE_CONVEX_SITE_URL,
+  plugins: [convexClient(), crossDomainClient()],
+});
+```
+
+</Step>
+
+<Step title="Wrap your app with ConvexBetterAuthProvider">
+
+Replace the standard `ConvexProvider` with `ConvexBetterAuthProvider`. It handles token management and keeps your Convex client authenticated.
+
+```tsx src/main.tsx
+import React from "react";
+import ReactDOM from "react-dom/client";
+import App from "./App";
+import "./index.css";
+import { ConvexReactClient } from "convex/react";
+import { ConvexBetterAuthProvider } from "@convex-dev/better-auth/react";
+import { authClient } from "@/lib/auth-client";
+
+const convex = new ConvexReactClient(import.meta.env.VITE_CONVEX_URL as string, {
+  // Optionally pause queries until the user is authenticated
+  expectAuth: true,
+});
+
+ReactDOM.createRoot(document.getElementById("root")!).render(
+  <React.StrictMode>
+    <ConvexBetterAuthProvider client={convex} authClient={authClient}>
+      <App />
+    </ConvexBetterAuthProvider>
+  </React.StrictMode>
+);
+```
+
+</Step>
+
+</Steps>
 
 ## Next steps
 
-Now that you have your docs running, explore these key features:
+The steps above are the common foundation. Each framework has additional configuration — environment variable names, provider setup, and SSR utilities differ. Follow your framework guide to complete the setup:
 
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="React (Vite SPA)" icon="react" href="/framework-guides/react">
+    Full install guide for React SPAs with Vite
+  </Card>
+  <Card title="Next.js" icon="layer-group" href="/framework-guides/nextjs">
+    Full install guide with SSR, server components, and route handlers
+  </Card>
+  <Card title="TanStack Start" icon="bolt" href="/framework-guides/tanstack-start">
+    Full install guide for TanStack Start
+  </Card>
+  <Card title="SvelteKit" icon="code" href="/framework-guides/sveltekit">
+    Full install guide for SvelteKit
+  </Card>
+  <Card title="Expo (React Native)" icon="mobile" href="/framework-guides/expo">
+    Full install guide for Expo
+  </Card>
 </CardGroup>
 
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>
+Once installed, see [Basic Usage](/usage/basic-usage) for sign-in, sign-up, and session management patterns, or browse [Supported Plugins](/usage/supported-plugins) to add 2FA, magic links, OTP, and more.

@@ -1,0 +1,99 @@
+{
+  "projectType": "sdk-library",
+  "projectName": "Convex + Better Auth",
+  "projectDescription": "A Convex component that integrates Better Auth with Convex, providing authentication, social sign-on, multi-factor authentication, and session management for React and full-stack applications.",
+  "theme": "luma",
+  "primaryColor": "#f4b21b",
+  "lightColor": "#8c2474",
+  "darkColor": "#ed332c",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Framework Guides",
+            "pages": [
+              "framework-guides/react",
+              "framework-guides/nextjs",
+              "framework-guides/tanstack-start",
+              "framework-guides/sveltekit",
+              "framework-guides/expo"
+            ]
+          },
+          {
+            "group": "Usage",
+            "pages": [
+              "usage/basic-usage",
+              "usage/authorization",
+              "usage/supported-plugins",
+              "usage/triggers",
+              "usage/local-install"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "advanced/experimental",
+              "advanced/debugging",
+              "advanced/migrations"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "API",
+            "pages": [
+              "api/component-client",
+              "api/convex-plugin",
+              "api/type-utilities"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Convex component integration with Better Auth",
+    "Support for email/password authentication",
+    "Social sign-on (GitHub, Google, Discord, Twitter, and more)",
+    "Two-factor authentication (2FA)",
+    "Transactional triggers for auth data changes",
+    "Framework support: React, Next.js, TanStack Start, SvelteKit, Expo",
+    "Local install option for full schema control",
+    "Cross-domain authentication support",
+    "SSR support with JWT caching",
+    "Static JWKS for optimized token validation"
+  ],
+  "publicApiSurface": [
+    "createClient() - Create component client for Convex+BetterAuth integration",
+    "createApi() - Create adapter API functions for local install",
+    "convexAdapter - Convex database adapter for Better Auth",
+    "ConvexBetterAuthProvider - React provider component",
+    "AuthBoundary - React component for auth error boundary",
+    "convex() - Server plugin for Better Auth",
+    "convexClient() - Client plugin for Better Auth",
+    "convexBetterAuthNextJs() - Next.js server utilities",
+    "convexBetterAuthReactStart() - TanStack Start server utilities",
+    "getAuthConfigProvider() - Get Convex auth config provider",
+    "requireActionCtx() - Type guard for action context",
+    "requireRunMutationCtx() - Type guard for mutation/action context",
+    "authComponent.adapter(ctx) - Database adapter",
+    "authComponent.getAuth(createAuth, ctx) - Get auth instance with headers",
+    "authComponent.getAnyUserById(ctx, id) - Get user by ID",
+    "authComponent.registerRoutes(http, createAuth) - Register HTTP routes",
+    "authComponent.registerRoutesLazy(http, createAuth) - Lazy HTTP route registration",
+    "authComponent.triggersApi() - Get triggers API functions",
+    "authComponent.clientApi() - Get client API functions"
+  ]
+}

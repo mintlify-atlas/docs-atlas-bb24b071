@@ -1,0 +1,261 @@
+---
+title: React (Vite SPA)
+description: Install and configure Convex + Better Auth for React Vite single-page applications.
+keywords: ['convex', 'better-auth', 'react', 'vite', 'spa', 'setup']
+---
+
+<Note>
+  A complete working example is available in the [GitHub repo](https://github.com/get-convex/better-auth/tree/main/examples/react).
+</Note>
+
+React Vite SPAs use the `crossDomain` plugin because authentication requests go to your Convex `.convex.site` URL rather than the same origin as your app. This guide covers the complete setup.
+
+## Installation
+
+<Steps>
+
+<Step title="Install packages">
+
+Install the component, ensure you have the latest version of Convex, and install a pinned version of Better Auth.
+
+<Warning>
+  This component requires Convex **1.25.0** or later. Install `better-auth@1.5.3` with an exact pin to avoid unexpected breaking changes.
+</Warning>
+
+<CodeGroup>
+
+```bash npm
+npm install convex@latest @convex-dev/better-auth
+npm install better-auth@1.5.3 --save-exact
+```
+
+```bash yarn
+yarn add convex@latest @convex-dev/better-auth
+yarn add better-auth@1.5.3 --exact
+```
+
+```bash pnpm
+pnpm add convex@latest @convex-dev/better-auth
+pnpm add better-auth@1.5.3 --save-exact
+```
+
+</CodeGroup>
+
+</Step>
+
+<Step title="Register the component">
+
+Register the Better Auth component in your Convex project configuration.
+
+```ts convex/convex.config.ts
+import { defineApp } from "convex/server";
+import betterAuth from "@convex-dev/better-auth/convex.config";
+
+const app = defineApp();
+app.use(betterAuth);
+
+export default app;
+```
+
+</Step>
+
+<Step title="Add Convex auth config">
+
+Add a `convex/auth.config.ts` file to configure Better Auth as a Convex authentication provider.
+
+```ts convex/auth.config.ts
+import { getAuthConfigProvider } from "@convex-dev/better-auth/auth-config";
+import type { AuthConfig } from "convex/server";
+
+export default {
+  providers: [getAuthConfigProvider()],
+} satisfies AuthConfig;
+```
+
+</Step>
+
+<Step title="Set environment variables">
+
+Generate a secret for encryption and hashing, and set your site URL on your Convex deployment.
+
+```shell
+npx convex env set BETTER_AUTH_SECRET=$(openssl rand -base64 32)
+npx convex env set SITE_URL http://localhost:5173
+```
+
+Then add the client-side environment variables to the `.env.local` file created by `npx convex dev`.
+
+<Tabs>
+  <Tab title="Cloud">
+
+```shell .env.local
+# Deployment used by `npx convex dev`
+CONVEX_DEPLOYMENT=dev:adjective-animal-123 # team: team-name, project: project-name
+
+VITE_CONVEX_URL=https://adjective-animal-123.convex.cloud
+
+# Same as VITE_CONVEX_URL but ends in .site
+VITE_CONVEX_SITE_URL=https://adjective-animal-123.convex.site
+
+# Your local site URL
+VITE_SITE_URL=http://localhost:5173
+```
+
+  </Tab>
+  <Tab title="Self-hosted">
+
+```shell .env.local
+# Deployment used by `npx convex dev`
+CONVEX_DEPLOYMENT=dev:adjective-animal-123 # team: team-name, project: project-name
+
+VITE_CONVEX_URL=http://127.0.0.1:3210
+
+# Will generally be one number higher than VITE_CONVEX_URL,
+# so if your convex url is :3212, your site url will be :3213
+VITE_CONVEX_SITE_URL=http://127.0.0.1:3211
+
+# Your local site URL
+VITE_SITE_URL=http://localhost:5173
+```
+
+  </Tab>
+</Tabs>
+
+</Step>
+
+<Step title="Create a Better Auth server instance">
+
+Create the Better Auth instance in `convex/auth.ts` and initialize the component. The `crossDomain` plugin is required for client-side SPAs because auth requests cross origins.
+
+<Note>
+  Some TypeScript errors will appear until you save the file and generated types are updated.
+</Note>
+
+```ts convex/auth.ts
+import { createClient, type GenericCtx } from "@convex-dev/better-auth";
+import { convex, crossDomain } from "@convex-dev/better-auth/plugins";
+import { components } from "./_generated/api";
+import { DataModel } from "./_generated/dataModel";
+import { query } from "./_generated/server";
+import { betterAuth, type BetterAuthOptions } from "better-auth/minimal";
+import authConfig from "./auth.config";
+
+const siteUrl = process.env.SITE_URL!;
+
+// The component client has methods needed for integrating Convex with Better Auth,
+// as well as helper methods for general use.
+export const authComponent = createClient<DataModel>(components.betterAuth);
+
+export const createAuth = (ctx: GenericCtx<DataModel>) => {
+  return betterAuth({
+    trustedOrigins: [siteUrl],
+    database: authComponent.adapter(ctx),
+    // Configure simple, non-verified email/password to get started
+    emailAndPassword: {
+      enabled: true,
+      requireEmailVerification: false,
+    },
+    plugins: [
+      // The cross domain plugin is required for client side frameworks
+      crossDomain({ siteUrl }),
+      // The Convex plugin is required for Convex compatibility
+      convex({ authConfig }),
+    ],
+  });
+};
+
+// Example function for getting the current user
+// Feel free to edit, omit, etc.
+export const getCurrentUser = query({
+  args: {},
+  handler: async (ctx) => {
+    return authComponent.getAuthUser(ctx);
+  },
+});
+```
+
+</Step>
+
+<Step title="Create a Better Auth client instance">
+
+Create a Better Auth client instance for your frontend. Both the `convexClient` and `crossDomainClient` plugins are required for React SPAs.
+
+```ts src/lib/auth-client.ts
+import { createAuthClient } from "better-auth/react";
+import {
+  convexClient,
+  crossDomainClient,
+} from "@convex-dev/better-auth/client/plugins";
+
+export const authClient = createAuthClient({
+  baseURL: import.meta.env.VITE_CONVEX_SITE_URL,
+  plugins: [convexClient(), crossDomainClient()],
+});
+```
+
+</Step>
+
+<Step title="Mount HTTP route handlers">
+
+Register the Better Auth route handlers on your Convex HTTP router. CORS handling is required because the client and auth server are on different origins.
+
+```ts convex/http.ts
+import { httpRouter } from "convex/server";
+import { authComponent, createAuth } from "./auth";
+
+const http = httpRouter();
+
+// CORS handling is required for client side frameworks
+authComponent.registerRoutes(http, createAuth, { cors: true });
+
+export default http;
+```
+
+</Step>
+
+<Step title="Set up the Convex client provider">
+
+Wrap your app with `ConvexBetterAuthProvider` from `@convex-dev/better-auth/react`. This replaces the standard `ConvexProvider` and handles token management automatically.
+
+```tsx src/main.tsx
+import React from "react";
+import ReactDOM from "react-dom/client";
+import App from "./App";
+import "./index.css";
+import { ConvexReactClient } from "convex/react";
+import { ConvexBetterAuthProvider } from "@convex-dev/better-auth/react";
+import { authClient } from "@/lib/auth-client";
+
+const convex = new ConvexReactClient(import.meta.env.VITE_CONVEX_URL as string, {
+  // Optionally pause queries until the user is authenticated
+  expectAuth: true,
+});
+
+ReactDOM.createRoot(document.getElementById("root")!).render(
+  <React.StrictMode>
+    <ConvexBetterAuthProvider client={convex} authClient={authClient}>
+      <App />
+    </ConvexBetterAuthProvider>
+  </React.StrictMode>
+);
+```
+
+</Step>
+
+</Steps>
+
+You're now ready to use Better Auth with Convex in your React app.
+
+## Usage
+
+See [Basic Usage](/usage/basic-usage) for sign-in, sign-up, and session management patterns. The notes below are specific to React SPAs.
+
+### Social sign-in
+
+Social sign-in for React SPAs works the same as with full-stack frameworks, but the authorized redirect URI is based on your Convex site URL rather than your application domain.
+
+For example, with [Google sign-in](https://www.better-auth.com/docs/authentication/google), the authorized redirect URI looks like:
+
+```
+https://adjective-animal-123.convex.site/api/auth/callback/google
+```

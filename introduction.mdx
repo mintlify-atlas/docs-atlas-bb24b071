@@ -1,0 +1,78 @@
+---
+title: Introduction
+description: A Convex Component that integrates Better Auth with Convex — email/password, social sign-on, two-factor auth, and more.
+keywords: ['convex', 'better-auth', 'authentication', 'component', 'oauth', '2fa']
+---
+
+Convex + Better Auth is a [Convex Component](https://www.convex.dev/components) that provides an integration layer for using [Better Auth](https://www.better-auth.com) with [Convex](https://www.convex.dev).
+
+Better Auth handles authentication logic — sessions, accounts, OAuth flows, two-factor auth, and more. The Convex component provides the database adapter, HTTP routing, and JWT/JWKS management that makes Better Auth work seamlessly inside a Convex backend.
+
+## Features
+
+<CardGroup cols={2}>
+  <Card title="Email & password" icon="envelope">
+    Built-in support for email and password authentication with session and account management.
+  </Card>
+  <Card title="Social sign-on" icon="users">
+    Allow users to sign in with GitHub, Google, Discord, Twitter, and many more OAuth providers.
+  </Card>
+  <Card title="Two-factor auth" icon="shield">
+    Secure user accounts with TOTP-based two-factor authentication with a few lines of code.
+  </Card>
+  <Card title="Transactional triggers" icon="bolt">
+    Run Convex mutations in the same transaction as auth events — `onCreate`, `onUpdate`, `onDelete`.
+  </Card>
+  <Card title="Framework support" icon="layer-group">
+    Works with React (Vite SPA), Next.js, TanStack Start, SvelteKit, and Expo (React Native).
+  </Card>
+  <Card title="Full schema control" icon="database">
+    Use Local Install to own your auth schema and access all Better Auth plugins.
+  </Card>
+</CardGroup>
+
+## How it works
+
+Better Auth is a framework-agnostic authentication library. Normally it needs a server-side runtime and a database. This component provides both within your Convex deployment:
+
+- **Database adapter** — translates Better Auth's data model into Convex documents, so all auth data lives in your Convex database.
+- **HTTP routing** — mounts Better Auth's `/api/auth/*` route handlers on your Convex HTTP router, so auth endpoints are served from your Convex deployment's `.convex.site` URL.
+- **JWT/JWKS management** — issues signed JWTs for authenticated Convex queries and mutations, and exposes a JWKS endpoint so Convex can verify those tokens.
+
+Your client uses Better Auth's standard client library to sign in, sign up, and manage sessions. Convex uses the resulting JWT to authenticate queries and mutations just like any other Convex auth provider.
+
+## Prerequisites
+
+Before installing Convex + Better Auth, you need:
+
+- An existing Convex project. Run `npm create convex@latest` if you don't have one.
+- Convex **1.25.0** or later (`convex` package).
+- Better Auth **1.5.x** — install the pinned version `better-auth@1.5.3 --save-exact`.
+
+<Note>
+  This component enforces the minimum Convex version at runtime. If you import `@convex-dev/better-auth` with an older version of Convex installed, it will throw an error immediately.
+</Note>
+
+## Framework guides
+
+Installation steps differ slightly between frameworks. Choose yours to get started:
+
+<CardGroup cols={2}>
+  <Card title="React (Vite SPA)" icon="react" href="/framework-guides/react">
+    Client-side SPA using Vite and React
+  </Card>
+  <Card title="Next.js" icon="layer-group" href="/framework-guides/nextjs">
+    Full-stack React with SSR and server components
+  </Card>
+  <Card title="TanStack Start" icon="bolt" href="/framework-guides/tanstack-start">
+    Full-stack React with TanStack Router
+  </Card>
+  <Card title="SvelteKit" icon="code" href="/framework-guides/sveltekit">
+    Full-stack Svelte with SvelteKit
+  </Card>
+  <Card title="Expo (React Native)" icon="mobile" href="/framework-guides/expo">
+    Mobile apps with Expo and React Native
+  </Card>
+</CardGroup>
+
+If you want a guided walkthrough that covers the steps common to every framework, see the [Quickstart](/quickstart).

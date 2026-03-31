@@ -1,0 +1,652 @@
+---
+title: "Migration Guides"
+description: "Upgrade guides for Convex + Better Auth"
+---
+
+This page covers breaking changes between major versions of `@convex-dev/better-auth`. Expand the section for the version you are upgrading to and follow the steps in order.
+
+<Note>
+  Always check the [CHANGELOG](https://github.com/get-convex/better-auth/blob/main/CHANGELOG.md) for breaking changes in minor and patch versions as well.
+</Note>
+
+<AccordionGroup>
+
+  <Accordion title="0.10 → 0.11">
+
+## Upgrade
+
+### Install dependencies
+
+Update Better Auth and the component.
+
+<Warning>
+  Be sure to review [breaking changes in Better Auth 1.5](https://www.better-auth.com/blog/1-5).
+</Warning>
+
+```bash
+npm install @convex-dev/better-auth@^0.11.0
+npm install better-auth
+```
+
+## Breaking changes
+
+### Passkey plugin removed
+
+The passkey plugin is no longer bundled with the component. If you are using passkey, switch to [Local Install](/usage/local-install) and install `@better-auth/passkey` directly. The passkey table has been removed from the component schema.
+
+### `oauthApplication` field rename
+
+The `redirectURLs` field on the `oauthApplication` table has been renamed to `redirectUrls`. This only applies if you are using the OIDC provider plugin (a "Sign in with MyApp" setup). If you have existing data in this table, use the [Convex migrations component](https://www.convex.dev/components/migrations) to rename the field before deploying.
+
+## Local Install additional steps
+
+These steps are only necessary for apps using [Local Install](/usage/local-install).
+
+### Regenerate schema
+
+Whenever updating Better Auth with Local Install, regenerate the schema.
+
+```bash
+cd convex/betterAuth
+npx @better-auth/cli generate -y
+```
+
+  </Accordion>
+
+  <Accordion title="0.9 → 0.10">
+
+## Upgrade component
+
+### Install dependencies
+
+Update Better Auth and the component.
+
+<Warning>
+  Be sure to review [breaking changes in Better Auth 1.4](https://www.better-auth.com/blog/1-4#%EF%B8%8F-breaking-changes).
+</Warning>
+
+<Note>
+  Check your dependencies for other Better Auth packages and pin them all to 1.4.9. For example, if you are using `@better-auth/expo`, it also needs to be upgraded.
+</Note>
+
+```bash
+npm install @convex-dev/better-auth@^0.10.0
+npm install better-auth@1.4.9 --save-exact
+```
+
+## Update auth config
+
+### Use `customJwt` auth config
+
+[`customJwt` auth config](https://docs.convex.dev/auth/advanced/custom-jwt) is now recommended for faster JWT validation. A helper is provided to generate the config object.
+
+```ts title="convex/auth.config.ts"
+import type { AuthConfig } from "convex/server";
+import { getAuthConfigProvider } from "@convex-dev/better-auth/auth-config";
+
+export default {
+  providers: [
+    getAuthConfigProvider(),
+    // Remove the old manual provider object:
+    // {
+    //   applicationID: "convex",
+    //   domain: process.env.CONVEX_SITE_URL!,
+    // },
+  ],
+} satisfies AuthConfig;
+```
+
+### Update Convex Better Auth plugin config
+
+The plugin now requires the auth config object. Also set `jwksRotateOnTokenGenerationError: true` initially so keys can be rotated when an algorithm mismatch occurs (RS256 replaced EdDSA). You can disable it later.
+
+```ts title="convex/auth.ts"
+import authConfig from "./auth.config";
+
+export const createAuthOptions = (ctx: GenericCtx<DataModel>) => {
+  return {
+    baseURL: siteUrl,
+    database: authComponent.adapter(ctx),
+    // ... other auth config
+    plugins: [
+      // ... other plugins
+      // Before:
+      // convex(),
+      convex({
+        authConfig,
+        jwksRotateOnTokenGenerationError: true,
+      }),
+    ],
+  } satisfies BetterAuthOptions;
+};
+```
+
+### Drop `optionsOnly` parameter from `createAuth`
+
+The `optionsOnly` parameter is no longer needed.
+
+```ts title="convex/auth.ts"
+// Before:
+// export const createAuth = (
+//   ctx: GenericCtx<DataModel>,
+//   { optionsOnly } = { optionsOnly: false },
+// ) => {
+export const createAuth = (ctx: GenericCtx<DataModel>) => {
+  return betterAuth({
+    // Remove the logger block that referenced optionsOnly
+    // ... auth config
+  });
+};
+```
+
+## SSR improvements
+
+These steps are only necessary for apps using SSR (Next.js, TanStack Start).
+
+### Update framework server utilities
+
+Replace the previous server utility functions with the new framework-specific helpers. The new functions only accept a function reference and arguments — no token configuration is needed.
+
+<Tabs>
+  <Tab title="Next.js">
+    ```ts title="lib/auth-server.ts"
+    import { convexBetterAuthNextJs } from "@convex-dev/better-auth/nextjs";
+
+    export const {
+      handler,
+      preloadAuthQuery,
+      isAuthenticated,
+      getToken,
+      fetchAuthQuery,
+      fetchAuthMutation,
+      fetchAuthAction,
+    } = convexBetterAuthNextJs({
+      convexUrl: process.env.NEXT_PUBLIC_CONVEX_URL!,
+      convexSiteUrl: process.env.NEXT_PUBLIC_CONVEX_SITE_URL!,
+    });
+    ```
+  </Tab>
+  <Tab title="TanStack Start">
+    ```ts title="src/lib/auth-server.ts"
+    import { convexBetterAuthReactStart } from "@convex-dev/better-auth/react-start";
+
+    export const {
+      handler,
+      getToken,
+      fetchAuthQuery,
+      fetchAuthMutation,
+      fetchAuthAction,
+    } = convexBetterAuthReactStart({
+      convexUrl: process.env.VITE_CONVEX_URL!,
+      convexSiteUrl: process.env.VITE_CONVEX_SITE_URL!,
+    });
+    ```
+  </Tab>
+</Tabs>
+
+### Update route handlers
+
+<Tabs>
+  <Tab title="Next.js">
+    ```ts title="app/api/auth/[...all]/route.ts"
+    import { handler } from "@/lib/auth-server";
+
+    export const { GET, POST } = handler;
+    ```
+  </Tab>
+  <Tab title="TanStack Start">
+    ```ts title="src/routes/api/auth/$.ts"
+    import { createFileRoute } from '@tanstack/react-router'
+    import { handler } from '~/lib/auth-server'
+
+    export const Route = createFileRoute('/api/auth/$')({
+      server: {
+        handlers: {
+          GET: ({ request }) => handler(request),
+          POST: ({ request }) => handler(request),
+        },
+      },
+    })
+    ```
+  </Tab>
+</Tabs>
+
+### Pass initial token to `ConvexBetterAuthProvider`
+
+Passing an initial token speeds up client authentication on first load.
+
+<Tabs>
+  <Tab title="Next.js">
+    Update `ConvexClientProvider` to accept an `initialToken` prop, then fetch it from the root layout.
+
+    ```tsx title="app/ConvexClientProvider.tsx"
+    export function ConvexClientProvider({
+      children,
+      initialToken,
+    }: {
+      children: ReactNode;
+      initialToken?: string | null;
+    }) {
+      return (
+        <ConvexBetterAuthProvider
+          client={convex}
+          authClient={authClient}
+          initialToken={initialToken}
+        >
+          {children}
+        </ConvexBetterAuthProvider>
+      );
+    }
+    ```
+
+    ```tsx title="app/layout.tsx"
+    import { getToken } from "@/lib/auth-server";
+    import { ConvexClientProvider } from "./ConvexClientProvider";
+    import { PropsWithChildren } from "react";
+
+    export default async function RootLayout({ children }: PropsWithChildren) {
+      const token = await getToken();
+      return (
+        <html>
+          <body>
+            <ConvexClientProvider initialToken={token}>
+              {children}
+            </ConvexClientProvider>
+          </body>
+        </html>
+      );
+    }
+    ```
+  </Tab>
+  <Tab title="TanStack Start">
+    ```tsx title="src/routes/__root.tsx"
+    function RootComponent() {
+      const context = useRouteContext({ from: Route.id })
+      return (
+        <ConvexBetterAuthProvider
+          client={context.convexQueryClient.convexClient}
+          authClient={authClient}
+          initialToken={context.token}
+        >
+          <RootDocument>
+            <Outlet />
+          </RootDocument>
+        </ConvexBetterAuthProvider>
+      )
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Next.js changes
+
+### Use `usePreloadedAuthQuery`
+
+`usePreloadedAuthQuery` replaces `usePreloadedQuery` as a drop-in. It ensures server-rendered data is displayed until authentication is ready.
+
+```tsx title="app/(auth)/(dashboard)/todo-list.tsx"
+import { usePreloadedAuthQuery } from "@convex-dev/better-auth/nextjs/client";
+
+export const TodoList = ({ preloadedUserQuery }) => {
+  const userQuery = usePreloadedAuthQuery(preloadedUserQuery);
+  return (
+    <div>
+      <h1>{userQuery?.name}</h1>
+    </div>
+  );
+};
+```
+
+## TanStack Start changes
+
+### Update Vite configuration
+
+Bundle `@convex-dev/better-auth` during SSR to avoid module resolution issues.
+
+```ts title="vite.config.ts"
+export default defineConfig({
+  // ...other config
+  ssr: {
+    noExternal: ["@convex-dev/better-auth"],
+  },
+});
+```
+
+### Update router config
+
+Set `expectAuth: true` on `ConvexQueryClient` so that authenticated data from server render is not lost after first render. Also remove the unused `Wrap` provider if you have one.
+
+```tsx title="src/router.tsx"
+const convexQueryClient = new ConvexQueryClient(convexUrl, {
+  expectAuth: true,
+});
+```
+
+### Update root route
+
+Replace the old `fetchAuth` server function with the new `getAuth` helper.
+
+```tsx title="src/routes/__root.tsx"
+import { createServerFn } from "@tanstack/react-start";
+import { getToken } from "@/lib/auth-server";
+
+const getAuth = createServerFn({ method: "GET" }).handler(async () => {
+  return await getToken();
+});
+
+export const Route = createRootRouteWithContext<{
+  queryClient: QueryClient;
+  convexQueryClient: ConvexQueryClient;
+}>()({
+  beforeLoad: async (ctx) => {
+    const token = await getAuth();
+    if (token) {
+      ctx.context.convexQueryClient.serverHttpClient?.setAuth(token);
+    }
+    return {
+      isAuthenticated: !!token,
+      token,
+    };
+  },
+  component: RootComponent,
+});
+```
+
+### Reload on sign out
+
+Update sign-out functions to reload the page so `expectAuth` works correctly for the next sign in.
+
+```ts title="src/lib/auth-client.ts"
+export const handleSignOut = async () => {
+  await authClient.signOut({
+    fetchOptions: {
+      onSuccess: () => {
+        location.reload();
+      },
+    },
+  });
+};
+```
+
+## Local Install additional steps
+
+These steps are only necessary for apps using [Local Install](/usage/local-install).
+
+### Remove `getStaticAuth`
+
+Replace `getStaticAuth` in `convex/betterAuth/auth.ts` with a simple `createAuth` call.
+
+<Warning>
+  This file should only contain your `auth` export for schema generation. If it is imported at runtime it will trigger errors due to missing environment variables.
+</Warning>
+
+```ts title="convex/betterAuth/auth.ts"
+import { createAuth } from "../auth";
+
+export const auth = createAuth({} as any);
+```
+
+### Regenerate schema
+
+```bash
+cd convex/betterAuth
+npx @better-auth/cli generate -y
+```
+
+### Split out `createAuthOptions` function
+
+Extract a `createAuthOptions` function that returns only the options object. This avoids running Better Auth just to access options statically.
+
+```ts title="convex/auth.ts"
+import {
+  betterAuth,
+  type BetterAuthOptions,
+} from "better-auth/minimal";
+
+export const createAuthOptions = (ctx: GenericCtx<DataModel>) => {
+  return {
+    // ... auth config
+  } satisfies BetterAuthOptions;
+};
+
+export const createAuth = (ctx: GenericCtx<DataModel>) => {
+  return betterAuth(createAuthOptions(ctx));
+};
+```
+
+### Update adapter
+
+Replace `createAuth` with `createAuthOptions` in `adapter.ts` and remove the now-deleted `migrationRemoveUserId` export.
+
+```ts title="convex/betterAuth/adapter.ts"
+import { createApi } from "@convex-dev/better-auth";
+import { createAuthOptions } from "./auth";
+import schema from "./schema";
+
+export const {
+  create,
+  findOne,
+  findMany,
+  updateOne,
+  updateMany,
+  deleteOne,
+  deleteMany,
+} = createApi(schema, createAuthOptions);
+```
+
+  </Accordion>
+
+  <Accordion title="0.8 → 0.9">
+
+<Warning>
+  This release includes breaking changes. Not following the migration steps correctly can lead to unexpected behavior.
+</Warning>
+
+## Upgrade component
+
+### Install dependencies
+
+```bash
+npm install @convex-dev/better-auth@0.9
+npm install better-auth@1.3.34 --save-exact
+```
+
+### Regenerate schema (Local Install only)
+
+```bash
+cd convex/betterAuth
+npx @better-auth/cli generate -y
+```
+
+### Update `onUpdate` triggers
+
+The `onUpdate` hook now receives the new doc as the second parameter and the old doc as the third. Update any triggers accordingly — the old doc can be omitted from the signature if you don't need it.
+
+```ts title="convex/auth.ts"
+export const authComponent = createClient<DataModel>(components.betterAuth, {
+  authFunctions,
+  triggers: {
+    user: {
+      // Before: onUpdate: async (ctx, oldDoc, newDoc) => {
+      onUpdate: async (ctx, newDoc, oldDoc) => {
+        // oldDoc can be left out of the signature if not needed
+      },
+    },
+  },
+});
+```
+
+### Use `_id` in database adapter
+
+Any direct adapter usage that references the `id` field should be updated to use `_id`.
+
+```ts title="convex/auth.ts"
+export const getUserById = query({
+  args: { authId: v.string() },
+  handler: async (ctx, args) => {
+    const user = await ctx.runQuery(components.betterAuth.adapter.findOne, {
+      model: "user",
+      where: [{ field: "_id", value: args.authId }],
+    });
+    return user;
+  },
+});
+```
+
+### Migrate away from `user.userId` (recommended)
+
+Storing your app user ID in the Better Auth user table is deprecated and will be removed in a future release. See the [migrate-userid guide](https://github.com/get-convex/better-auth/blob/main/docs/content/docs/migrations/migrate-to-0-9/migrate-userid/) for the full migration steps.
+
+  </Accordion>
+
+  <Accordion title="0.7 → 0.8">
+
+## Upgrade
+
+### Install dependencies
+
+```bash
+npm install @convex-dev/better-auth@0.8
+npm install better-auth@1.3.8 --save-exact
+```
+
+### Update component instance
+
+Replace the `BetterAuth` class constructor with `createClient`.
+
+```ts title="convex/auth.ts"
+import {
+  AuthFunctions,
+  createClient,
+} from "@convex-dev/better-auth";
+import { DataModel } from "./_generated/dataModel";
+import { components } from "./_generated/api";
+
+const authFunctions: AuthFunctions = internal.auth;
+
+export const authComponent = createClient<DataModel>(
+  components.betterAuth, {
+    authFunctions,
+  });
+
+export const { onCreate, onUpdate, onDelete } = authComponent.triggersApi();
+```
+
+### Convert hooks from `createAuthFunctions` to triggers
+
+The `onCreateUser`, `onUpdateUser`, and `onDeleteUser` hooks from `betterAuthComponent.createAuthFunctions()` have been replaced by triggers. See the [Triggers guide](/usage/triggers) for more information.
+
+```ts title="convex/auth.ts"
+export const authComponent = createClient<DataModel>(
+  components.betterAuth,
+  {
+    authFunctions,
+    triggers: {
+      user: {
+        onCreate: async (ctx, authUser) => {
+          // Any onCreateUser logic goes here
+          const userId = await ctx.db.insert('users', {
+            email: authUser.email,
+          });
+          // Required when migrating from previous versions to avoid a
+          // database migration — sets the userId on the component user table.
+          await authComponent.setUserId(ctx, authUser._id, userId);
+        },
+        onUpdate: async (ctx, oldUser, newUser) => {
+          // Any onUpdateUser logic goes here
+        },
+        onDelete: async (ctx, authUser) => {
+          await ctx.db.delete(authUser.userId as Id<'users'>);
+        },
+      },
+    },
+  },
+);
+
+export const { onCreate, onUpdate, onDelete } = authComponent.triggersApi();
+```
+
+### Move and update Better Auth config
+
+Move `createAuth` to `convex/auth.ts`. The Convex database adapter is now provided through `authComponent.adapter(ctx)`, and a `GenericCtx` type from the component library is used to type the `ctx` argument.
+
+```ts title="convex/auth.ts"
+import {
+  type GenericCtx,
+  createClient,
+} from "@convex-dev/better-auth";
+import { DataModel } from "./_generated/dataModel";
+
+export const authComponent = createClient<DataModel>(
+  components.betterAuth,
+  // ...
+);
+
+export const createAuth = (
+  ctx: GenericCtx<DataModel>,
+) => {
+  return betterAuth({
+    // ...
+    database: authComponent.adapter(ctx),
+  });
+};
+```
+
+### Update `ctx.auth.getUserIdentity()` usage
+
+The `subject` property of the identity token is now the Better Auth user ID, not the app user ID. Replace direct `subject` usage with `authComponent.getAuthUser(ctx)`.
+
+```ts title="convex/messages.ts"
+export const listMessages = query({
+  args: {},
+  handler: async (ctx) => {
+    const userId = (await authComponent.getAuthUser(ctx))?.userId;
+    return ctx.db
+      .query("messages")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .collect();
+  },
+});
+```
+
+### Update `authComponent.getAuthUser()` usage
+
+`authComponent.getAuthUser()` now throws if the user is not found. Use `authComponent.safeGetAuthUser()` to restore the previous behavior of returning `null`.
+
+```ts title="convex/auth.ts"
+export const getCurrentUser = query({
+  args: {},
+  handler: async (ctx) => {
+    const userMetadata = await authComponent.safeGetAuthUser(ctx);
+    if (!userMetadata) {
+      return null;
+    }
+    const user = await ctx.db.get(userMetadata.userId as Id<"users">);
+    return {
+      ...user,
+      ...userMetadata,
+    };
+  },
+});
+```
+
+### Remove Convex plugin `options` parameter
+
+The named `options` parameter to the Convex plugin has been removed. Go back to using a single `createAuth` function.
+
+```ts title="convex/auth.ts"
+export const createAuth = (ctx: GenericCtx<DataModel>) => {
+  return betterAuth({
+    baseURL: siteUrl,
+    database: authComponent.adapter(ctx),
+    plugins: [
+      // ...plugins
+      convex(),
+    ],
+  });
+};
+```
+
+  </Accordion>
+
+</AccordionGroup>

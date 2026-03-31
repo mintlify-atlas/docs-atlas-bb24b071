@@ -1,0 +1,367 @@
+---
+title: "Component Client"
+description: "API reference for the Convex + Better Auth component client"
+---
+
+The component client is returned from `createClient()` and provides methods for using Better Auth inside your Convex functions.
+
+## `createClient(component, options?)`
+
+Factory function that creates the component client. Call it once in `convex/auth.ts` and export the result.
+
+```ts title="convex/auth.ts"
+import { createClient } from "@convex-dev/better-auth";
+import { components } from "./_generated/api";
+import { type DataModel } from "./_generated/dataModel";
+
+export const authComponent = createClient<DataModel>(components.betterAuth);
+```
+
+### Type parameter
+
+<ParamField path="DataModel" type="GenericDataModel" required>
+  Your Convex data model, imported from `./_generated/dataModel`.
+</ParamField>
+
+### Parameters
+
+<ParamField path="component" type="ComponentApi" required>
+  The `components.betterAuth` reference from `./_generated/api`, registered in `convex.config.ts`.
+</ParamField>
+
+<ParamField path="options" type="object">
+  Optional configuration.
+
+  <Expandable title="options">
+    <ParamField path="options.verbose" type="boolean" default="false">
+      Enable verbose logging for HTTP route handling and Better Auth internals.
+    </ParamField>
+
+    <ParamField path="options.local" type="object">
+      Local schema configuration. Used with [Local Install](/usage/local-install).
+
+      <Expandable title="local">
+        <ParamField path="options.local.schema" type="SchemaDefinition">
+          Your custom Convex schema. Required when using local install.
+        </ParamField>
+      </Expandable>
+    </ParamField>
+
+    <ParamField path="options.triggers" type="Triggers">
+      Per-table lifecycle callbacks (`onCreate`, `onUpdate`, `onDelete`). Must be provided together with `authFunctions`.
+    </ParamField>
+
+    <ParamField path="options.authFunctions" type="AuthFunctions">
+      References to the internal mutations exported by `triggersApi()`. Must be provided together with `triggers`. See [`triggersApi()`](#triggersapi).
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+---
+
+## `adapter(ctx)`
+
+Returns the Convex database adapter for use in `betterAuth({ database: ... })`.
+
+```ts title="convex/auth.ts"
+import { createClient } from "@convex-dev/better-auth";
+import { betterAuth } from "better-auth";
+import { components } from "./_generated/api";
+import { type GenericCtx } from "@convex-dev/better-auth";
+import { type DataModel } from "./_generated/dataModel";
+
+export const authComponent = createClient<DataModel>(components.betterAuth);
+
+export const createAuth = (ctx: GenericCtx<DataModel>) => {
+  return betterAuth({
+    database: authComponent.adapter(ctx),
+    // ...other options
+  });
+};
+```
+
+### Parameters
+
+<ParamField path="ctx" type="GenericCtx<DataModel>" required>
+  The Convex context passed into the enclosing function (query, mutation, or action).
+</ParamField>
+
+---
+
+## `getAuth(createAuth, ctx)`
+
+Returns `{ auth, headers }` for calling `auth.api` methods directly from a Convex mutation or query. Because Convex functions don't have access to request headers, `getAuth` constructs a `Headers` object at runtime using the session token from the current user identity.
+
+```ts title="convex/users.ts"
+import { mutation } from "./_generated/server";
+import { v } from "convex/values";
+import { authComponent, createAuth } from "./auth";
+
+export const changePassword = mutation({
+  args: {
+    currentPassword: v.string(),
+    newPassword: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const { auth, headers } = await authComponent.getAuth(createAuth, ctx);
+    await auth.api.changePassword({
+      body: {
+        currentPassword: args.currentPassword,
+        newPassword: args.newPassword,
+      },
+      headers,
+    });
+  },
+});
+```
+
+### Parameters
+
+<ParamField path="createAuth" type="CreateAuth<DataModel>" required>
+  Your `createAuth` function exported from `convex/auth.ts`.
+</ParamField>
+
+<ParamField path="ctx" type="GenericCtx<DataModel>" required>
+  The Convex context for the current function.
+</ParamField>
+
+### Returns
+
+A promise resolving to `{ auth, headers }`:
+
+- `auth` — the Better Auth instance returned by `createAuth(ctx)`.
+- `headers` — a `Headers` object containing the current session token as a `Bearer` token. Pass this to `auth.api` methods that require authentication.
+
+---
+
+## `getAuthUser(ctx)`
+
+Returns the current authenticated user after validating that the session has not expired. Throws a `ConvexError("Unauthenticated")` if no valid session is found.
+
+```ts title="convex/users.ts"
+import { query } from "./_generated/server";
+import { authComponent } from "./auth";
+
+export const getCurrentUser = query({
+  args: {},
+  handler: async (ctx) => {
+    return await authComponent.getAuthUser(ctx);
+  },
+});
+```
+
+### Parameters
+
+<ParamField path="ctx" type="GenericCtx<DataModel>" required>
+  The Convex context for the current function.
+</ParamField>
+
+### Returns
+
+A promise resolving to the current user document, or throws `ConvexError("Unauthenticated")` if there is no authenticated user or the session has expired.
+
+<Note>
+  If you want a nullable return instead of throwing, use `safeGetAuthUser(ctx)`,
+  which returns `undefined` when no authenticated user is found.
+</Note>
+
+---
+
+## `getAnyUserById(ctx, id)`
+
+Returns a user by their Better Auth user ID, regardless of the current session.
+
+```ts title="convex/users.ts"
+import { query } from "./_generated/server";
+import { v } from "convex/values";
+import { authComponent } from "./auth";
+
+export const getUser = query({
+  args: { id: v.string() },
+  handler: async (ctx, args) => {
+    return await authComponent.getAnyUserById(ctx, args.id);
+  },
+});
+```
+
+### Parameters
+
+<ParamField path="ctx" type="GenericCtx<DataModel>" required>
+  The Convex context for the current function.
+</ParamField>
+
+<ParamField path="id" type="string" required>
+  The Better Auth user ID (the `_id` field on the `user` table).
+</ParamField>
+
+### Returns
+
+A promise resolving to the user document, or `null` if no user with that ID exists.
+
+---
+
+## `registerRoutes(http, createAuth, options?)`
+
+Registers Better Auth HTTP handlers on a Convex `HttpRouter`. Use this in `convex/http.ts`.
+
+```ts title="convex/http.ts"
+import { httpRouter } from "convex/server";
+import { authComponent, createAuth } from "./auth";
+
+const http = httpRouter();
+
+authComponent.registerRoutes(http, createAuth, {
+  cors: true,
+  trustedOrigins: [process.env.SITE_URL!],
+});
+
+export default http;
+```
+
+### Parameters
+
+<ParamField path="http" type="HttpRouter" required>
+  The Convex HTTP router instance.
+</ParamField>
+
+<ParamField path="createAuth" type="CreateAuth<DataModel>" required>
+  Your `createAuth` function. It is called immediately during route registration to read `basePath` from the Better Auth options.
+</ParamField>
+
+<ParamField path="options" type="object">
+  <Expandable title="options">
+    <ParamField path="options.cors" type="boolean | object" default="false">
+      Enable CORS handling. Pass `true` to use defaults, or an object to extend:
+
+      - `allowedOrigins` — additional origins to allow (appended to Better Auth's `trustedOrigins`).
+      - `allowedHeaders` — additional headers beyond `Content-Type`, `Better-Auth-Cookie`, and `Authorization`.
+      - `exposedHeaders` — additional headers beyond `Set-Better-Auth-Cookie`.
+    </ParamField>
+
+    <ParamField path="options.trustedOrigins" type="string[]">
+      Explicit list of allowed origins for CORS. If not provided, falls back to the `trustedOrigins` in your Better Auth config.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<Note>
+  `registerRoutes` calls `createAuth({})` at registration time to read `basePath`, which initializes Better Auth eagerly. Use [`registerRoutesLazy`](#registerrouteslazy) to defer this and reduce memory usage during deploy.
+</Note>
+
+---
+
+## `registerRoutesLazy(http, createAuth, options?)`
+
+Lazy version of `registerRoutes` that defers Better Auth initialization until the first request. This avoids loading Better Auth at deploy time, which can prevent out-of-memory errors in `convex/http.ts`.
+
+```ts title="convex/http.ts"
+import { httpRouter } from "convex/server";
+import { authComponent, createAuth } from "./auth";
+
+const http = httpRouter();
+
+authComponent.registerRoutesLazy(http, createAuth, {
+  basePath: "/api/auth",
+  cors: true,
+  trustedOrigins: [process.env.SITE_URL!],
+});
+
+export default http;
+```
+
+Because Better Auth is not initialized at registration time, you must provide `basePath` explicitly if you use a non-default path. If using CORS, pass `trustedOrigins` directly so the `OPTIONS` pre-flight handler can respond without loading Better Auth.
+
+### Parameters
+
+<ParamField path="http" type="HttpRouter" required>
+  The Convex HTTP router instance.
+</ParamField>
+
+<ParamField path="createAuth" type="CreateAuth<DataModel>" required>
+  Your `createAuth` function. Not called until the first auth request arrives.
+</ParamField>
+
+<ParamField path="options" type="object">
+  <Expandable title="options">
+    <ParamField path="options.basePath" type="string" default="/api/auth">
+      The base path for Better Auth routes. Must match the `basePath` in your Better Auth config.
+    </ParamField>
+
+    <ParamField path="options.cors" type="boolean | object" default="false">
+      Enable CORS handling. Accepts the same shape as `registerRoutes`.
+    </ParamField>
+
+    <ParamField path="options.trustedOrigins" type="string[] | function">
+      Allowed CORS origins. Accepts an array of strings or an async function `(request?) => string[]`. When provided here, the pre-flight `OPTIONS` response does not need to initialize Better Auth.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+---
+
+## `triggersApi()`
+
+Returns internal mutations (`onCreate`, `onUpdate`, `onDelete`) that execute the trigger callbacks defined in `createClient` options. Export these from `convex/auth.ts` so the component can call them.
+
+```ts title="convex/auth.ts"
+import { createClient } from "@convex-dev/better-auth";
+import { components } from "./_generated/api";
+import { type DataModel } from "./_generated/dataModel";
+import { internal } from "./_generated/api";
+
+export const authComponent = createClient<DataModel>(components.betterAuth, {
+  triggers: {
+    user: {
+      onCreate: async (ctx, doc) => {
+        // Create a corresponding record in your app's users table
+        await ctx.db.insert("appUsers", { authId: doc._id, role: "member" });
+      },
+    },
+  },
+  authFunctions: internal.auth,
+});
+
+export const { onCreate, onUpdate, onDelete } = authComponent.triggersApi();
+```
+
+### Returns
+
+An object with three internal mutations:
+
+- `onCreate` — called after a document is created in a Better Auth table.
+- `onUpdate` — called after a document is updated.
+- `onDelete` — called after a document is deleted.
+
+Each mutation receives `{ model, doc }` (or `{ model, newDoc, oldDoc }` for updates) and dispatches to the matching callback in your `triggers` config.
+
+---
+
+## `clientApi()`
+
+Returns a `getAuthUser` Convex query for use with the `AuthBoundary` component. Export the result from `convex/auth.ts`.
+
+```ts title="convex/auth.ts"
+export const { getAuthUser } = authComponent.clientApi();
+```
+
+Then reference it in your `AuthBoundary`:
+
+```tsx title="components/ClientAuthBoundary.tsx"
+import { AuthBoundary } from "@convex-dev/better-auth/react";
+import { api } from "@/convex/_generated/api";
+
+export const ClientAuthBoundary = ({ children }) => (
+  <AuthBoundary
+    getAuthUserFn={api.auth.getAuthUser}
+    // ...other props
+  >
+    {children}
+  </AuthBoundary>
+);
+```
+
+### Returns
+
+An object containing:
+
+- `getAuthUser` — a Convex query that returns the current user or throws `ConvexError("Unauthenticated")` if there is no valid session.
